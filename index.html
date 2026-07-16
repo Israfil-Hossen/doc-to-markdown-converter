@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Inkwell — Batch Document to Markdown Converter</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/turndown/7.1.2/turndown.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+  :root{
+    --paper:#F2F3EE;
+    --ink:#20241F;
+    --ink-soft:#5C635A;
+    --line:#C9CDC3;
+    --green:#2E5E3F;
+    --green-bright:#3E8A58;
+    --amber:#B07A1E;
+    --red:#A6432E;
+    --card:#FBFBF8;
+    --mono:'IBM Plex Mono',ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+    --body:'Inter',system-ui,-apple-system,'Segoe UI',sans-serif;
+  }
+  @import url('');
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{font-size:16px}
+  body{
+    font-family:var(--body);
+    background:var(--paper);
+    color:var(--ink);
+    min-height:100vh;
+    background-image:linear-gradient(var(--line) 1px, transparent 1px);
+    background-size:100% 56px;
+    background-position:0 8px;
+  }
+  .wrap{max-width:880px;margin:0 auto;padding:40px 20px 80px}
+
+  header{margin-bottom:36px}
+  .eyebrow{
+    font-family:var(--mono);font-size:.72rem;letter-spacing:.14em;
+    text-transform:uppercase;color:var(--green);margin-bottom:10px;
+  }
+  h1{
+    font-size:clamp(1.9rem,4.5vw,2.7rem);
+    font-weight:800;letter-spacing:-.02em;line-height:1.08;
+  }
+  h1 .md{color:var(--green)}
+  .sub{margin-top:12px;color:var(--ink-soft);font-size:.95rem;max-width:56ch;line-height:1.55}
+
+  /* Drop zone */
+  .drop{
+    margin-top:8px;
+    border:2px dashed var(--line);
+    border-radius:14px;
+    background:var(--card);
+    padding:44px 24px;
+    text-align:center;
+    cursor:pointer;
+    transition:border-color .18s,background .18s,transform .12s;
+    outline:none;
+  }
+  .drop:hover,.drop:focus-visible{border-color:var(--green-bright)}
+  .drop:focus-visible{box-shadow:0 0 0 3px rgba(62,138,88,.35)}
+  .drop.over{border-color:var(--green-bright);background:#EFF5EF;transform:scale(1.004)}
+  .drop-icon{
+    width:52px;height:52px;margin:0 auto 14px;border-radius:12px;
+    background:var(--green);color:#fff;display:flex;align-items:center;justify-content:center;
+    font-size:24px;
+  }
+  .drop-title{font-weight:700;font-size:1.05rem}
+  .drop-hint{margin-top:6px;color:var(--ink-soft);font-size:.85rem}
+  .drop-hint b{color:var(--ink)}
+  .formats{
+    margin-top:16px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap;
+  }
+  .chip{
+    font-family:var(--mono);font-size:.7rem;letter-spacing:.06em;
+    border:1px solid var(--line);border-radius:999px;padding:4px 12px;
+    background:var(--paper);color:var(--ink-soft);
+  }
+  input[type=file]{display:none}
+
+  /* Toolbar */
+  .toolbar{
+    display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+    margin:28px 0 14px;
+  }
+  .count{
+    font-family:var(--mono);font-size:.78rem;color:var(--ink-soft);
+    letter-spacing:.05em;
+  }
+  .count b{color:var(--ink)}
+  .spacer{flex:1}
+  button{
+    font-family:var(--body);font-weight:600;font-size:.85rem;
+    border-radius:9px;padding:10px 18px;cursor:pointer;
+    border:1px solid transparent;transition:background .15s,opacity .15s;
+  }
+  button:disabled{opacity:.45;cursor:not-allowed}
+  .btn-primary{background:var(--green);color:#fff}
+  .btn-primary:hover:not(:disabled){background:var(--green-bright)}
+  .btn-ghost{background:transparent;border-color:var(--line);color:var(--ink)}
+  .btn-ghost:hover:not(:disabled){background:#E9EBE4}
+  button:focus-visible{outline:3px solid rgba(62,138,88,.4);outline-offset:1px}
+
+  /* Progress */
+  .progress-rail{
+    height:6px;border-radius:99px;background:#E2E5DC;overflow:hidden;
+    margin-bottom:18px;display:none;
+  }
+  .progress-rail.show{display:block}
+  .progress-fill{height:100%;width:0;background:var(--green-bright);transition:width .25s}
+
+  /* File list */
+  .list{display:flex;flex-direction:column;gap:8px}
+  .row{
+    display:flex;align-items:center;gap:14px;
+    background:var(--card);border:1px solid var(--line);border-radius:11px;
+    padding:12px 16px;
+  }
+  .badge{
+    font-family:var(--mono);font-size:.62rem;font-weight:700;letter-spacing:.08em;
+    padding:4px 8px;border-radius:6px;flex-shrink:0;min-width:46px;text-align:center;
+  }
+  .badge.pdf{background:#F3E4DE;color:var(--red)}
+  .badge.docx{background:#DEE7F0;color:#2C5378}
+  .badge.txt{background:#E7E9E2;color:var(--ink-soft)}
+  .fmeta{flex:1;min-width:0}
+  .fname{font-size:.88rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .fstatus{font-family:var(--mono);font-size:.68rem;letter-spacing:.05em;margin-top:3px;color:var(--ink-soft)}
+  .fstatus.done{color:var(--green-bright)}
+  .fstatus.error{color:var(--red)}
+  .fstatus.working{color:var(--amber)}
+  .row-actions{display:flex;gap:6px;flex-shrink:0}
+  .mini{
+    font-size:.72rem;padding:7px 12px;border-radius:7px;
+    background:transparent;border:1px solid var(--line);color:var(--ink);
+    font-weight:600;
+  }
+  .mini:hover:not(:disabled){background:#E9EBE4}
+  .mini.remove{color:var(--red)}
+
+  /* Preview modal */
+  .modal-bg{
+    position:fixed;inset:0;background:rgba(32,36,31,.45);
+    display:none;align-items:center;justify-content:center;padding:24px;z-index:50;
+  }
+  .modal-bg.show{display:flex}
+  .modal{
+    background:var(--card);border-radius:14px;max-width:760px;width:100%;
+    max-height:82vh;display:flex;flex-direction:column;overflow:hidden;
+    border:1px solid var(--line);
+  }
+  .modal-head{
+    display:flex;align-items:center;gap:12px;padding:14px 18px;
+    border-bottom:1px solid var(--line);
+  }
+  .modal-title{font-family:var(--mono);font-size:.75rem;letter-spacing:.06em;flex:1;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .modal pre{
+    flex:1;overflow:auto;padding:20px;margin:0;
+    font-family:var(--mono);font-size:.78rem;line-height:1.6;
+    white-space:pre-wrap;word-break:break-word;background:var(--paper);
+  }
+
+  .empty-note{
+    text-align:center;color:var(--ink-soft);font-size:.85rem;
+    padding:26px 0;font-family:var(--mono);letter-spacing:.04em;display:none;
+  }
+
+  footer{
+    margin-top:48px;font-family:var(--mono);font-size:.68rem;
+    color:var(--ink-soft);letter-spacing:.06em;text-align:center;
+  }
+
+  @media (prefers-reduced-motion: reduce){
+    *{transition:none!important}
+  }
+  @media (max-width:560px){
+    .row{flex-wrap:wrap}
+    .row-actions{width:100%;justify-content:flex-end}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Batch converter · runs in your browser</div>
+    <h1>Documents in.<br>Clean <span class="md">Markdown</span> out.</h1>
+    <p class="sub">Drop PDF, Word, or text files — 50, 100, as many as you like. Each one is converted to a .md file you can download individually or all at once as a ZIP. Nothing is uploaded anywhere; conversion happens right on this page.</p>
+  </header>
+
+  <div class="drop" id="drop" tabindex="0" role="button" aria-label="Add files to convert">
+    <div class="drop-icon">⇣</div>
+    <div class="drop-title">Drop files here, or click to browse</div>
+    <div class="drop-hint">Batch supported — add <b>50+ files</b> in one go</div>
+    <div class="formats">
+      <span class="chip">.pdf</span>
+      <span class="chip">.docx</span>
+      <span class="chip">.txt</span>
+      <span class="chip">.md</span>
+      <span class="chip">.csv</span>
+      <span class="chip">.html</span>
+    </div>
+  </div>
+  <input type="file" id="fileInput" multiple accept=".pdf,.docx,.txt,.md,.csv,.html,.htm">
+
+  <div class="toolbar">
+    <span class="count" id="count">0 files queued</span>
+    <span class="spacer"></span>
+    <button class="btn-ghost" id="clearBtn" disabled>Clear all</button>
+    <button class="btn-primary" id="convertBtn" disabled>Convert all</button>
+    <button class="btn-primary" id="zipBtn" disabled>Download ZIP</button>
+  </div>
+
+  <div class="progress-rail" id="rail"><div class="progress-fill" id="fill"></div></div>
+
+  <div class="empty-note" id="emptyNote">— queue is empty —</div>
+  <div class="list" id="list"></div>
+
+  <footer>PDF → structured Markdown with heading detection · DOCX via style mapping · 100% local</footer>
+</div>
+
+<div class="modal-bg" id="modalBg">
+  <div class="modal" role="dialog" aria-modal="true">
+    <div class="modal-head">
+      <span class="modal-title" id="modalTitle"></span>
+      <button class="mini" id="copyBtn">Copy</button>
+      <button class="mini" id="closeBtn">Close</button>
+    </div>
+    <pre id="modalPre"></pre>
+  </div>
+</div>
+
+<script>
+pdfjsLib.GlobalWorkerOptions.workerSrc =
+  'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+const td = new TurndownService({headingStyle:'atx', codeBlockStyle:'fenced', bulletListMarker:'-'});
+
+const state = { files: [] }; // {id, file, kind, status, md, error}
+let nextId = 1;
+
+const drop = document.getElementById('drop');
+const fileInput = document.getElementById('fileInput');
+const listEl = document.getElementById('list');
+const countEl = document.getElementById('count');
+const convertBtn = document.getElementById('convertBtn');
+const zipBtn = document.getElementById('zipBtn');
+const clearBtn = document.getElementById('clearBtn');
+const rail = document.getElementById('rail');
+const fill = document.getElementById('fill');
+const emptyNote = document.getElementById('emptyNote');
+const modalBg = document.getElementById('modalBg');
+const modalPre = document.getElementById('modalPre');
+const modalTitle = document.getElementById('modalTitle');
+
+function kindOf(name){
+  const ext = name.toLowerCase().split('.').pop();
+  if (ext === 'pdf') return 'pdf';
+  if (ext === 'docx') return 'docx';
+  return 'txt';
+}
+
+function addFiles(fileList){
+  for (const f of fileList){
+    const ext = f.name.toLowerCase().split('.').pop();
+    if (!['pdf','docx','txt','md','csv','html','htm'].includes(ext)) continue;
+    state.files.push({ id: nextId++, file: f, kind: kindOf(f.name), status: 'queued', md: null, error: null });
+  }
+  render();
+}
+
+drop.addEventListener('click', () => fileInput.click());
+drop.addEventListener('keydown', e => { if (e.key==='Enter'||e.key===' '){ e.preventDefault(); fileInput.click(); }});
+fileInput.addEventListener('change', () => { addFiles(fileInput.files); fileInput.value=''; });
+
+['dragenter','dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
+['dragleave','drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));
+drop.addEventListener('drop', e => addFiles(e.dataTransfer.files));
+
+// ---------- Converters ----------
+
+async function pdfToMarkdown(file){
+  const buf = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({data: buf}).promise;
+  const parts = [];
+
+  for (let p = 1; p <= pdf.numPages; p++){
+    const page = await pdf.getPage(p);
+    const content = await page.getTextContent();
+    const items = content.items.filter(i => i.str !== undefined);
+    if (!items.length) continue;
+
+    // Group items into lines by Y position
+    const lines = [];
+    let current = null;
+    for (const it of items){
+      const y = Math.round(it.transform[5]);
+      const h = it.height || Math.abs(it.transform[3]) || 10;
+      if (current && Math.abs(current.y - y) <= h * 0.4){
+        current.text += (current.text.endsWith(' ') || it.str.startsWith(' ') ? '' : ' ') + it.str;
+        current.h = Math.max(current.h, h);
+      } else {
+        if (current) lines.push(current);
+        current = { y, h, text: it.str };
+      }
+    }
+    if (current) lines.push(current);
+
+    // Median font height on the page → heading heuristic
+    const hs = lines.map(l => l.h).sort((a,b)=>a-b);
+    const median = hs[Math.floor(hs.length/2)] || 10;
+
+    const pageOut = [];
+    let para = [];
+    const flush = () => {
+      if (para.length){ pageOut.push(para.join(' ').replace(/\s+/g,' ').trim()); para = []; }
+    };
+
+    for (const l of lines){
+      const t = l.text.trim();
+      if (!t) { flush(); continue; }
+      const ratio = l.h / median;
+      if (ratio >= 1.7 && t.length < 90){ flush(); pageOut.push('# ' + t); }
+      else if (ratio >= 1.35 && t.length < 90){ flush(); pageOut.push('## ' + t); }
+      else if (ratio >= 1.15 && t.length < 90){ flush(); pageOut.push('### ' + t); }
+      else if (/^\s*[•●▪◦‣·]\s*/.test(t)){ flush(); pageOut.push('- ' + t.replace(/^\s*[•●▪◦‣·]\s*/,'')); }
+      else if (/^\s*\d+[\.\)]\s+/.test(t) && t.length < 200){ flush(); pageOut.push(t.replace(/^\s*(\d+)[\.\)]\s+/,'$1. ')); }
+      else {
+        para.push(t);
+        // End paragraph if line ends a sentence
+        if (/[.!?:]$/.test(t)) flush();
+      }
+    }
+    flush();
+
+    parts.push(pageOut.join('\n\n'));
+  }
+  return parts.join('\n\n---\n\n').trim() || '_(No extractable text found — this PDF may be a scanned image.)_';
+}
+
+async function docxToMarkdown(file){
+  const buf = await file.arrayBuffer();
+  const result = await mammoth.convertToHtml({arrayBuffer: buf});
+  return td.turndown(result.value).trim() || '_(Empty document)_';
+}
+
+async function textToMarkdown(file){
+  const raw = await file.text();
+  const ext = file.name.toLowerCase().split('.').pop();
+  if (ext === 'html' || ext === 'htm') return td.turndown(raw).trim();
+  if (ext === 'csv'){
+    const rows = raw.trim().split(/\r?\n/).map(r => r.split(','));
+    if (!rows.length) return '';
+    const head = '| ' + rows[0].join(' | ') + ' |';
+    const sep = '|' + rows[0].map(()=>' --- ').join('|') + '|';
+    const body = rows.slice(1).map(r => '| ' + r.join(' | ') + ' |').join('\n');
+    return [head, sep, body].join('\n');
+  }
+  return raw.trim();
+}
+
+async function convertOne(item){
+  item.status = 'working'; render();
+  try{
+    if (item.kind === 'pdf') item.md = await pdfToMarkdown(item.file);
+    else if (item.kind === 'docx') item.md = await docxToMarkdown(item.file);
+    else item.md = await textToMarkdown(item.file);
+    item.status = 'done';
+  }catch(err){
+    item.status = 'error';
+    item.error = err.message || 'Conversion failed';
+  }
+  render();
+}
+
+async function convertAll(){
+  const pending = state.files.filter(f => f.status === 'queued' || f.status === 'error');
+  if (!pending.length) return;
+  convertBtn.disabled = true;
+  rail.classList.add('show');
+  let done = 0;
+  for (const item of pending){
+    await convertOne(item);
+    done++;
+    fill.style.width = Math.round(done / pending.length * 100) + '%';
+  }
+  setTimeout(()=>{ rail.classList.remove('show'); fill.style.width='0'; }, 900);
+  render();
+}
+
+// ---------- Downloads ----------
+
+function mdName(name){ return name.replace(/\.[^.]+$/, '') + '.md'; }
+
+function downloadOne(item){
+  const blob = new Blob([item.md], {type:'text/markdown;charset=utf-8'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = mdName(item.file.name);
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+async function downloadZip(){
+  const done = state.files.filter(f => f.status === 'done');
+  if (!done.length) return;
+  const zip = new JSZip();
+  const used = new Set();
+  for (const item of done){
+    let name = mdName(item.file.name), i = 1;
+    while (used.has(name)) name = mdName(item.file.name).replace(/\.md$/, `-${i++}.md`);
+    used.add(name);
+    zip.file(name, item.md);
+  }
+  const blob = await zip.generateAsync({type:'blob'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'converted-markdown.zip';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+// ---------- Preview ----------
+
+function openPreview(item){
+  modalTitle.textContent = mdName(item.file.name);
+  modalPre.textContent = item.md;
+  modalBg.classList.add('show');
+}
+document.getElementById('closeBtn').addEventListener('click', ()=> modalBg.classList.remove('show'));
+modalBg.addEventListener('click', e => { if (e.target === modalBg) modalBg.classList.remove('show'); });
+document.getElementById('copyBtn').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText(modalPre.textContent); } catch(e){}
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') modalBg.classList.remove('show'); });
+
+// ---------- Render ----------
+
+function statusLabel(item){
+  if (item.status === 'queued') return 'queued';
+  if (item.status === 'working') return 'converting…';
+  if (item.status === 'done') return '✓ converted · ' + (item.md.length/1024).toFixed(1) + ' KB markdown';
+  return '✗ ' + (item.error || 'failed');
+}
+
+function render(){
+  const n = state.files.length;
+  const doneCount = state.files.filter(f=>f.status==='done').length;
+  countEl.innerHTML = `<b>${n}</b> file${n===1?'':'s'} queued${doneCount ? ` · <b>${doneCount}</b> converted`:''}`;
+  convertBtn.disabled = !state.files.some(f => f.status==='queued' || f.status==='error');
+  zipBtn.disabled = doneCount === 0;
+  clearBtn.disabled = n === 0;
+  emptyNote.style.display = n === 0 ? 'block' : 'none';
+
+  listEl.innerHTML = '';
+  for (const item of state.files){
+    const row = document.createElement('div');
+    row.className = 'row';
+
+    const badge = document.createElement('span');
+    badge.className = 'badge ' + item.kind;
+    badge.textContent = item.kind.toUpperCase();
+
+    const meta = document.createElement('div');
+    meta.className = 'fmeta';
+    const name = document.createElement('div');
+    name.className = 'fname'; name.textContent = item.file.name;
+    const st = document.createElement('div');
+    st.className = 'fstatus ' + item.status; st.textContent = statusLabel(item);
+    meta.append(name, st);
+
+    const actions = document.createElement('div');
+    actions.className = 'row-actions';
+    if (item.status === 'done'){
+      const pv = document.createElement('button'); pv.className='mini'; pv.textContent='Preview';
+      pv.addEventListener('click', ()=>openPreview(item));
+      const dl = document.createElement('button'); dl.className='mini'; dl.textContent='.md ⇣';
+      dl.addEventListener('click', ()=>downloadOne(item));
+      actions.append(pv, dl);
+    }
+    const rm = document.createElement('button'); rm.className='mini remove'; rm.textContent='✕';
+    rm.setAttribute('aria-label','Remove ' + item.file.name);
+    rm.addEventListener('click', ()=>{ state.files = state.files.filter(f=>f.id!==item.id); render(); });
+    actions.append(rm);
+
+    row.append(badge, meta, actions);
+    listEl.append(row);
+  }
+}
+
+convertBtn.addEventListener('click', convertAll);
+zipBtn.addEventListener('click', downloadZip);
+clearBtn.addEventListener('click', ()=>{ state.files = []; render(); });
+
+render();
+</script>
+</body>
+</html>

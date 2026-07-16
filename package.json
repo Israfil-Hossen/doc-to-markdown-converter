@@ -1,0 +1,27 @@
+{
+  "name": "doc-to-markdown-converter",
+  "version": "1.0.0",
+  "description": "Batch convert PDF, DOCX, TXT, CSV and HTML files to Markdown. Runs fully offline in a desktop window.",
+  "main": "main.js",
+  "author": "Your Name",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.yourname.doctomarkdown",
+    "productName": "Doc to Markdown Converter",
+    "files": [
+      "index.html",
+      "main.js"
+    ],
+    "win": {
+      "target": "portable"
+    }
+  }
+}
