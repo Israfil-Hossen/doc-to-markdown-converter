@@ -4,6 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Inkwell — Batch Document to Markdown Converter</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;700&family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/turndown/7.1.2/turndown.min.js"></script>
@@ -22,7 +25,6 @@
     --mono:'IBM Plex Mono',ui-monospace,'SF Mono',Menlo,Consolas,monospace;
     --body:'Inter',system-ui,-apple-system,'Segoe UI',sans-serif;
   }
-  @import url('');
   *{box-sizing:border-box;margin:0;padding:0}
   html{font-size:16px}
   body{
@@ -81,10 +83,27 @@
   }
   input[type=file]{display:none}
 
+  /* Options */
+  .options{
+    display:flex;gap:18px;flex-wrap:wrap;align-items:center;
+    margin:20px 0 4px;padding:12px 16px;
+    background:var(--card);border:1px solid var(--line);border-radius:11px;
+  }
+  .options-label{
+    font-family:var(--mono);font-size:.68rem;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--green);
+  }
+  .opt{
+    display:flex;align-items:center;gap:7px;
+    font-size:.82rem;color:var(--ink-soft);cursor:pointer;
+  }
+  .opt input{accent-color:var(--green);width:15px;height:15px;cursor:pointer}
+  .opt:hover{color:var(--ink)}
+
   /* Toolbar */
   .toolbar{
     display:flex;align-items:center;gap:12px;flex-wrap:wrap;
-    margin:28px 0 14px;
+    margin:20px 0 14px;
   }
   .count{
     font-family:var(--mono);font-size:.78rem;color:var(--ink-soft);
@@ -132,6 +151,10 @@
   .fstatus.done{color:var(--green-bright)}
   .fstatus.error{color:var(--red)}
   .fstatus.working{color:var(--amber)}
+  .fwarn{
+    font-family:var(--mono);font-size:.65rem;letter-spacing:.04em;
+    margin-top:4px;color:var(--amber);
+  }
   .row-actions{display:flex;gap:6px;flex-shrink:0}
   .mini{
     font-size:.72rem;padding:7px 12px;border-radius:7px;
@@ -188,7 +211,7 @@
   <header>
     <div class="eyebrow">Batch converter · runs in your browser</div>
     <h1>Documents in.<br>Clean <span class="md">Markdown</span> out.</h1>
-    <p class="sub">Drop PDF, Word, or text files — 50, 100, as many as you like. Each one is converted to a .md file you can download individually or all at once as a ZIP. Nothing is uploaded anywhere; conversion happens right on this page.</p>
+    <p class="sub">Drop PDF, Word, or text files — 50, 100, as many as you like. Output is tuned for feeding into an AI: correct reading order on multi-column pages, running headers stripped, tables kept as tables. Nothing is uploaded anywhere; conversion happens right on this page.</p>
   </header>
 
   <div class="drop" id="drop" tabindex="0" role="button" aria-label="Add files to convert">
@@ -206,6 +229,14 @@
   </div>
   <input type="file" id="fileInput" multiple accept=".pdf,.docx,.txt,.md,.csv,.html,.htm">
 
+  <div class="options">
+    <span class="options-label">PDF options</span>
+    <label class="opt"><input type="checkbox" id="optColumns" checked> Detect columns</label>
+    <label class="opt"><input type="checkbox" id="optStrip" checked> Strip page headers</label>
+    <label class="opt"><input type="checkbox" id="optTables" checked> Rebuild tables</label>
+    <label class="opt"><input type="checkbox" id="optAnchors" checked> Page markers</label>
+  </div>
+
   <div class="toolbar">
     <span class="count" id="count">0 files queued</span>
     <span class="spacer"></span>
@@ -219,7 +250,7 @@
   <div class="empty-note" id="emptyNote">— queue is empty —</div>
   <div class="list" id="list"></div>
 
-  <footer>PDF → structured Markdown with heading detection · DOCX via style mapping · 100% local</footer>
+  <footer>Column-aware reading order · table reconstruction · optimised for LLM input · 100% local</footer>
 </div>
 
 <div class="modal-bg" id="modalBg">
@@ -239,7 +270,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc =
 
 const td = new TurndownService({headingStyle:'atx', codeBlockStyle:'fenced', bulletListMarker:'-'});
 
-const state = { files: [] }; // {id, file, kind, status, md, error}
+const state = { files: [] }; // {id, file, kind, status, md, error, warn}
 let nextId = 1;
 
 const drop = document.getElementById('drop');
@@ -256,6 +287,15 @@ const modalBg = document.getElementById('modalBg');
 const modalPre = document.getElementById('modalPre');
 const modalTitle = document.getElementById('modalTitle');
 
+function opts(){
+  return {
+    columns: document.getElementById('optColumns').checked,
+    strip:   document.getElementById('optStrip').checked,
+    tables:  document.getElementById('optTables').checked,
+    anchors: document.getElementById('optAnchors').checked,
+  };
+}
+
 function kindOf(name){
   const ext = name.toLowerCase().split('.').pop();
   if (ext === 'pdf') return 'pdf';
@@ -267,7 +307,7 @@ function addFiles(fileList){
   for (const f of fileList){
     const ext = f.name.toLowerCase().split('.').pop();
     if (!['pdf','docx','txt','md','csv','html','htm'].includes(ext)) continue;
-    state.files.push({ id: nextId++, file: f, kind: kindOf(f.name), status: 'queued', md: null, error: null });
+    state.files.push({ id: nextId++, file: f, kind: kindOf(f.name), status: 'queued', md: null, error: null, warn: null });
   }
   render();
 }
@@ -280,66 +320,281 @@ fileInput.addEventListener('change', () => { addFiles(fileInput.files); fileInpu
 ['dragleave','drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));
 drop.addEventListener('drop', e => addFiles(e.dataTransfer.files));
 
-// ---------- Converters ----------
 
-async function pdfToMarkdown(file){
+/* =================================================================
+   PDF → Markdown, tuned for machine reading
+   ================================================================= */
+
+const LIGATURES = {'\uFB00':'ff','\uFB01':'fi','\uFB02':'fl','\uFB03':'ffi','\uFB04':'ffl'};
+
+/* Ligatures and smart quotes break word matching for a model. Soft hyphens
+   are invisible characters that split words in the middle. */
+function cleanText(s){
+  let out = s;
+  for (const lig in LIGATURES) out = out.split(lig).join(LIGATURES[lig]);
+  return out
+    .replace(/\u00AD/g, '')
+    .replace(/[\u2018\u2019\u201B]/g, "'")
+    .replace(/[\u201C\u201D]/g, '"')
+    .replace(/\u2026/g, '...');
+}
+
+async function extractPage(page){
+  const viewport = page.getViewport({scale:1});
+  const content = await page.getTextContent();
+  const items = [];
+  for (const it of content.items){
+    if (!it.str || !it.str.trim()) continue;
+    const size = Math.abs(it.transform[3]) || it.height || 10;
+    const x0 = it.transform[4];
+    items.push({
+      text: cleanText(it.str),
+      x0,
+      x1: x0 + (it.width || it.str.length * size * 0.5),
+      y: it.transform[5],
+      size
+    });
+  }
+  return { items, width: viewport.width, height: viewport.height };
+}
+
+/* ---- Column detection -------------------------------------------------
+   Project every text box onto the horizontal axis. A column gutter is a
+   vertical band no text crosses. Without this, a two-column page is read
+   line-by-line straight across both columns and the result is gibberish. */
+function findColumns(items, pageWidth){
+  const BINS = 200;
+  const binW = pageWidth / BINS;
+  const occ = new Array(BINS).fill(0);
+
+  for (const it of items){
+    const a = Math.max(0, Math.floor(it.x0 / binW));
+    const b = Math.min(BINS-1, Math.ceil(it.x1 / binW));
+    for (let i = a; i <= b; i++) occ[i]++;
+  }
+
+  const MIN_GUTTER = Math.max(3, Math.round(BINS * 0.025));
+  const MARGIN = Math.round(BINS * 0.12);
+  const gutters = [];
+  let run = 0;
+
+  for (let b = 0; b <= BINS; b++){
+    if (b < BINS && occ[b] === 0){ run++; continue; }
+    if (run >= MIN_GUTTER){
+      const mid = (b - run + b) / 2;
+      if (mid > MARGIN && mid < BINS - MARGIN) gutters.push(mid * binW);
+    }
+    run = 0;
+  }
+  if (!gutters.length) return null;
+
+  const bounds = [0, ...gutters, pageWidth];
+  const cols = [];
+  for (let i = 0; i < bounds.length - 1; i++) cols.push({x0: bounds[i], x1: bounds[i+1]});
+
+  // A nearly-empty column means we split on a centred title or wide figure,
+  // not a real gutter. Better to fall back than to scramble the page.
+  const counts = cols.map(c => items.filter(it => {
+    const m = (it.x0 + it.x1) / 2; return m >= c.x0 && m < c.x1;
+  }).length);
+  if (Math.min.apply(null, counts) < items.length * 0.15) return null;
+
+  return cols;
+}
+
+/* ---- Line assembly ----------------------------------------------------
+   Wide horizontal gaps within one line almost always mean table cells, so
+   record them as tabs and count them for later table detection. */
+function groupLines(items){
+  const buckets = new Map();
+  for (const it of items){
+    const key = Math.round(it.y / 3);
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key).push(it);
+  }
+
+  const lines = [];
+  buckets.forEach(parts => {
+    parts.sort((a,b) => a.x0 - b.x0);
+    let text = '', prev = null, gaps = 0, size = 0, x0 = Infinity;
+    for (const p of parts){
+      if (prev){
+        const gap = p.x0 - prev.x1;
+        if (gap > prev.size * 2.5){ text += '\t'; gaps++; }
+        else if (gap > prev.size * 0.15 && !/\s$/.test(text) && !/^\s/.test(p.text)) text += ' ';
+      }
+      text += p.text;
+      size = Math.max(size, p.size);
+      x0 = Math.min(x0, p.x0);
+      prev = p;
+    }
+    lines.push({ y: parts[0].y, x0, size, cells: gaps + 1, text: text.replace(/ {2,}/g,' ').trim() });
+  });
+  return lines;
+}
+
+function orderLines(items, pageWidth, useColumns){
+  const cols = useColumns ? findColumns(items, pageWidth) : null;
+  if (!cols) return groupLines(items).sort((a,b) => b.y - a.y);
+
+  const out = [];
+  for (const c of cols){
+    const inCol = items.filter(it => {
+      const m = (it.x0 + it.x1) / 2; return m >= c.x0 && m < c.x1;
+    });
+    out.push.apply(out, groupLines(inCol).sort((a,b) => b.y - a.y));
+  }
+  return out;
+}
+
+/* ---- Running headers / footers ----------------------------------------
+   Forty copies of "Acme Corp · Confidential · Page 12" is pure noise to a
+   model and it wrecks chunk boundaries for RAG. */
+function stripRunning(pages){
+  if (pages.length < 3) return 0;
+  const norm = s => s.replace(/\d+/g,'#').replace(/\s+/g,' ').trim().toLowerCase();
+  const counts = new Map();
+
+  for (const pg of pages){
+    const edge = pg.lines.filter(l => l.y > pg.height*0.92 || l.y < pg.height*0.08);
+    const seen = new Set(edge.map(l => norm(l.text)));
+    seen.forEach(t => { if (t.length > 2) counts.set(t, (counts.get(t)||0) + 1); });
+  }
+
+  const threshold = Math.max(3, pages.length * 0.5);
+  const junk = new Set();
+  counts.forEach((n,t) => { if (n >= threshold) junk.add(t); });
+  if (!junk.size) return 0;
+
+  let removed = 0;
+  for (const pg of pages){
+    pg.lines = pg.lines.filter(l => {
+      const atEdge = l.y > pg.height*0.92 || l.y < pg.height*0.08;
+      if (atEdge && junk.has(norm(l.text))){ removed++; return false; }
+      return true;
+    });
+  }
+  return removed;
+}
+
+/* Rejoin words split across a line break: "manage-" + "ment". */
+function dehyphenate(lines){
+  const out = [];
+  for (const l of lines){
+    const prev = out[out.length-1];
+    if (prev && /[a-z]-$/.test(prev.text) && /^[a-z]/.test(l.text)){
+      prev.text = prev.text.slice(0,-1) + l.text;
+      continue;
+    }
+    out.push(Object.assign({}, l));
+  }
+  return out;
+}
+
+/* ---- Table reconstruction ---------------------------------------------
+   Runs of consecutive lines that split into the same number of wide-gap
+   segments are almost certainly a table. Real pipe syntax lets the model
+   line each value up with its header; loose text does not. */
+function emitTables(lines){
+  const out = [];
+  let i = 0;
+  while (i < lines.length){
+    const l = lines[i];
+    if (l.cells < 2){ out.push(l); i++; continue; }
+
+    let j = i;
+    while (j < lines.length && lines[j].cells === l.cells) j++;
+    if (j - i < 2){ out.push(l); i++; continue; }
+
+    const rows = lines.slice(i, j).map(r => r.text.split('\t').map(c => c.trim()));
+    const cols = rows[0].length;
+    const md = [
+      '| ' + rows[0].join(' | ') + ' |',
+      '| ' + new Array(cols).fill('---').join(' | ') + ' |'
+    ].concat(rows.slice(1).map(r => '| ' + r.join(' | ') + ' |')).join('\n');
+
+    out.push({ table: md });
+    i = j;
+  }
+  return out;
+}
+
+async function pdfToMarkdown(file, item){
+  const o = opts();
   const buf = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({data: buf}).promise;
-  const parts = [];
+
+  const pages = [];
+  let totalChars = 0;
 
   for (let p = 1; p <= pdf.numPages; p++){
     const page = await pdf.getPage(p);
-    const content = await page.getTextContent();
-    const items = content.items.filter(i => i.str !== undefined);
-    if (!items.length) continue;
+    const { items, width, height } = await extractPage(page);
+    totalChars += items.reduce((s,i) => s + i.text.length, 0);
+    pages.push({ n: p, height, lines: orderLines(items, width, o.columns) });
+    page.cleanup();
+  }
 
-    // Group items into lines by Y position
-    const lines = [];
-    let current = null;
-    for (const it of items){
-      const y = Math.round(it.transform[5]);
-      const h = it.height || Math.abs(it.transform[3]) || 10;
-      if (current && Math.abs(current.y - y) <= h * 0.4){
-        current.text += (current.text.endsWith(' ') || it.str.startsWith(' ') ? '' : ' ') + it.str;
-        current.h = Math.max(current.h, h);
-      } else {
-        if (current) lines.push(current);
-        current = { y, h, text: it.str };
-      }
-    }
-    if (current) lines.push(current);
+  if (totalChars < pdf.numPages * 40){
+    item.warn = 'no text layer — this is a scanned PDF, needs OCR';
+    return '_(No extractable text. This PDF is a scan — the pages are images, not text. ' +
+           'Run it through an OCR tool first.)_';
+  }
 
-    // Median font height on the page → heading heuristic
-    const hs = lines.map(l => l.h).sort((a,b)=>a-b);
-    const median = hs[Math.floor(hs.length/2)] || 10;
+  const removed = o.strip ? stripRunning(pages) : 0;
 
-    const pageOut = [];
+  const sizes = [];
+  for (const pg of pages) for (const l of pg.lines) sizes.push(l.size);
+  sizes.sort((a,b) => a - b);
+  const body = sizes[Math.floor(sizes.length/2)] || 10;
+
+  const out = [];
+  let multiCol = false;
+
+  for (const pg of pages){
+    if (o.anchors) out.push('', '<!-- page ' + pg.n + ' -->', '');
+
+    let lines = dehyphenate(pg.lines);
+    if (o.tables) lines = emitTables(lines);
+
     let para = [];
+    let prevY = null, prevSize = body;
     const flush = () => {
-      if (para.length){ pageOut.push(para.join(' ').replace(/\s+/g,' ').trim()); para = []; }
+      if (para.length){ out.push(para.join(' ').replace(/\s+/g,' ').trim()); para = []; }
     };
 
     for (const l of lines){
-      const t = l.text.trim();
-      if (!t) { flush(); continue; }
-      const ratio = l.h / median;
-      if (ratio >= 1.7 && t.length < 90){ flush(); pageOut.push('# ' + t); }
-      else if (ratio >= 1.35 && t.length < 90){ flush(); pageOut.push('## ' + t); }
-      else if (ratio >= 1.15 && t.length < 90){ flush(); pageOut.push('### ' + t); }
-      else if (/^\s*[•●▪◦‣·]\s*/.test(t)){ flush(); pageOut.push('- ' + t.replace(/^\s*[•●▪◦‣·]\s*/,'')); }
-      else if (/^\s*\d+[\.\)]\s+/.test(t) && t.length < 200){ flush(); pageOut.push(t.replace(/^\s*(\d+)[\.\)]\s+/,'$1. ')); }
-      else {
-        para.push(t);
-        // End paragraph if line ends a sentence
-        if (/[.!?:]$/.test(t)) flush();
-      }
+      if (l.table){ flush(); out.push('', l.table, ''); prevY = null; continue; }
+      const t = l.text;
+      if (!t){ flush(); continue; }
+
+      // A vertical jump larger than a line height means a new paragraph.
+      if (prevY !== null && (prevY - l.y) > prevSize * 1.8) flush();
+      prevY = l.y; prevSize = l.size;
+
+      const ratio = l.size / body;
+      if (ratio >= 1.7 && t.length < 90){ flush(); out.push('', '# ' + t, ''); }
+      else if (ratio >= 1.35 && t.length < 90){ flush(); out.push('', '## ' + t, ''); }
+      else if (ratio >= 1.15 && t.length < 90){ flush(); out.push('', '### ' + t, ''); }
+      else if (/^\s*[•●▪◦‣·]\s*/.test(t)){ flush(); out.push('- ' + t.replace(/^\s*[•●▪◦‣·]\s*/,'')); }
+      else if (/^\s*\d+[\.\)]\s+/.test(t) && t.length < 200){ flush(); out.push(t.replace(/^\s*(\d+)[\.\)]\s+/,'$1. ')); }
+      else para.push(t);
     }
     flush();
-
-    parts.push(pageOut.join('\n\n'));
   }
-  return parts.join('\n\n---\n\n').trim() || '_(No extractable text found — this PDF may be a scanned image.)_';
+
+  const notes = [];
+  if (removed) notes.push(removed + ' running header/footer lines removed');
+  if (notes.length) item.warn = notes.join(' · ');
+
+  return out.join('\n').replace(/\n{3,}/g,'\n\n').trim() ||
+         '_(No extractable text found.)_';
 }
+
+
+/* =================================================================
+   Other formats — unchanged
+   ================================================================= */
 
 async function docxToMarkdown(file){
   const buf = await file.arrayBuffer();
@@ -356,16 +611,16 @@ async function textToMarkdown(file){
     if (!rows.length) return '';
     const head = '| ' + rows[0].join(' | ') + ' |';
     const sep = '|' + rows[0].map(()=>' --- ').join('|') + '|';
-    const body = rows.slice(1).map(r => '| ' + r.join(' | ') + ' |').join('\n');
-    return [head, sep, body].join('\n');
+    const bodyRows = rows.slice(1).map(r => '| ' + r.join(' | ') + ' |').join('\n');
+    return [head, sep, bodyRows].join('\n');
   }
   return raw.trim();
 }
 
 async function convertOne(item){
-  item.status = 'working'; render();
+  item.status = 'working'; item.warn = null; render();
   try{
-    if (item.kind === 'pdf') item.md = await pdfToMarkdown(item.file);
+    if (item.kind === 'pdf') item.md = await pdfToMarkdown(item.file, item);
     else if (item.kind === 'docx') item.md = await docxToMarkdown(item.file);
     else item.md = await textToMarkdown(item.file);
     item.status = 'done';
@@ -391,7 +646,7 @@ async function convertAll(){
   render();
 }
 
-// ---------- Downloads ----------
+/* ---------- Downloads ---------- */
 
 function mdName(name){ return name.replace(/\.[^.]+$/, '') + '.md'; }
 
@@ -423,7 +678,7 @@ async function downloadZip(){
   URL.revokeObjectURL(a.href);
 }
 
-// ---------- Preview ----------
+/* ---------- Preview ---------- */
 
 function openPreview(item){
   modalTitle.textContent = mdName(item.file.name);
@@ -437,7 +692,7 @@ document.getElementById('copyBtn').addEventListener('click', async () => {
 });
 document.addEventListener('keydown', e => { if (e.key === 'Escape') modalBg.classList.remove('show'); });
 
-// ---------- Render ----------
+/* ---------- Render ---------- */
 
 function statusLabel(item){
   if (item.status === 'queued') return 'queued';
@@ -471,6 +726,11 @@ function render(){
     const st = document.createElement('div');
     st.className = 'fstatus ' + item.status; st.textContent = statusLabel(item);
     meta.append(name, st);
+    if (item.warn && item.status === 'done'){
+      const w = document.createElement('div');
+      w.className = 'fwarn'; w.textContent = '⚠ ' + item.warn;
+      meta.append(w);
+    }
 
     const actions = document.createElement('div');
     actions.className = 'row-actions';
